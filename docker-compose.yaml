@@ -8,8 +8,8 @@ services:
       LISTEN_ADDR: 0.0.0.0:8080
       RUST_LOG: ${RUST_LOG:-info}
       BACKEND_BASE_URL: ${BACKEND_BASE_URL:-https://llm.chutes.ai}
-      CHUTES_LIST_URL: ${CHUTES_LIST_URL:-https://api.chutes.ai/chutes/?limit=1000}
-      CHUTES_LIST_REFRESH_MS: ${CHUTES_LIST_REFRESH_MS:-300000}
+      MODELS_URL: ${MODELS_URL:-https://llm.chutes.ai/v1/models}
+      MODELS_REFRESH_MS: ${MODELS_REFRESH_MS:-300000}
       UTILIZATION_URL: ${UTILIZATION_URL:-https://api.chutes.ai/chutes/utilization}
       UTILIZATION_REFRESH_MS: ${UTILIZATION_REFRESH_MS:-5000}
       READYZ_MAX_SNAPSHOT_AGE_MS: ${READYZ_MAX_SNAPSHOT_AGE_MS:-20000}
@@ -54,4 +54,3 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-

@@ -48,18 +48,15 @@
 
 ### External HTTP APIs (Outbound)
 
-- Chute catalog (TEE allowlist, control plane; current)
-  - `GET https://api.chutes.ai/chutes/?limit=1000`
-  - Used to build an in-memory allowlist of `tee==true` and `public==true` chute names.
+- Model catalog (eligible-model allowlist, control plane)
+  - `GET https://llm.chutes.ai/v1/models`
+  - Used to build an in-memory allowlist of chat-capable model ids (TEE and non-TEE) for utilization filtering and request validation.
 - Utilization feed (control plane)
   - `GET https://api.chutes.ai/chutes/utilization`
   - Polled on an interval; response is a JSON array of chute utilization objects.
 - Backend OpenAI-compatible service (data plane)
   - Base URL configurable (example: `https://llm.chutes.ai`)
   - Target path: `/v1/chat/completions`
-- Planned: model catalog (eligible-model allowlist, control plane)
-  - `GET https://llm.chutes.ai/v1/models`
-  - Used to build an in-memory allowlist of chat-capable model ids (TEE and non-TEE) for utilization filtering and request validation.
 
 Reference (outbound, used for planning/verification only):
 - Chutes OpenAPI spec: `https://api.chutes.ai/openapi.json`
@@ -69,14 +66,11 @@ Reference (outbound, used for planning/verification only):
 - Listener:
   - `LISTEN_ADDR` (default: `0.0.0.0:8080`)
 - `BACKEND_BASE_URL`
-- `CHUTES_LIST_URL`
-- `CHUTES_LIST_REFRESH_MS`
-- Planned: `MODELS_URL` (default: `https://llm.chutes.ai/v1/models`)
-- Planned: `MODELS_REFRESH_MS` (default: `300000`)
+- `MODELS_URL` (default: `https://llm.chutes.ai/v1/models`)
+- `MODELS_REFRESH_MS` (default: `300000`)
 - `UTILIZATION_URL`
 - `UTILIZATION_REFRESH_MS`
-- Current policy: TEE-only is enforced (prefer authoritative TEE allowlist; fallback to `-TEE` suffix)
-- Planned policy: allow both TEE and non-TEE LLM models; use an OpenAI-style model catalog allowlist (`GET /v1/models`) to filter utilization candidates and validate user-specified models
+- Policy: allow both TEE and non-TEE LLM models; use an OpenAI-style model catalog allowlist (`GET /v1/models`) to filter utilization candidates and validate user-specified models when available
 - Logging configuration (language-specific; e.g. `LOG_LEVEL` or `RUST_LOG`)
 - `MAX_REQUEST_BYTES` (defensive bound)
 - `MAX_MODEL_LIST_ITEMS` (defensive bound)
@@ -91,11 +85,7 @@ Reference (outbound, used for planning/verification only):
 
 ### Control Plane
 
-- Chute catalog fetcher / TEE allowlist (current):
-  - HTTP client fetches chute catalog JSON.
-  - Parser extracts `name`, `tee`, `public`.
-  - Builds and refreshes an in-memory allowlist used by utilization filtering and request validation.
-- Planned: model catalog fetcher / eligible-model allowlist:
+- Model catalog fetcher / eligible-model allowlist:
   - HTTP client fetches `GET https://llm.chutes.ai/v1/models`.
   - Parser extracts `data[].id` and stores an allowlist of chat-capable model ids (includes both TEE and non-TEE).
   - Utilization ranking filters to this allowlist when available, to avoid selecting non-chat models present in the utilization feed.

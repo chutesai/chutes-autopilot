@@ -8,14 +8,14 @@ Legend:
 | Surface / Behavior | Spec | Plan | Tests | Status |
 | --- | --- | --- | --- | --- |
 | Project foundation (runnable service, tests, lint, README run steps) | `specs/001-project-foundation/spec.md` | Yes | Yes | Implemented |
-| Model catalog refresh loop (`MODELS_URL`, refresh interval, last-known-good allowlist) | `specs/003-utilization-and-ranking/spec.md` | Yes | Yes | Needs Update |
+| Model catalog refresh loop (`MODELS_URL`, refresh interval, last-known-good allowlist) | `specs/003-utilization-and-ranking/spec.md` | Yes | Yes | Implemented |
 | Utilization fetch loop (`UTILIZATION_URL`, refresh interval, last-known-good) | `specs/003-utilization-and-ranking/spec.md` | Yes | Yes | Implemented |
 | Filtering private chutes (`name == "[private chute]"`) | `specs/003-utilization-and-ranking/spec.md` | Yes | Yes | Implemented |
-| Eligibility filtering (filter utilization to chat-capable model allowlist; fallback heuristic when allowlist is empty) | `specs/003-utilization-and-ranking/spec.md` | Yes | Yes | Needs Update |
+| Eligibility filtering (filter utilization to chat-capable model allowlist; fallback heuristic when allowlist is empty) | `specs/003-utilization-and-ranking/spec.md` | Yes | Yes | Implemented |
 | Ranking algorithm + deterministic tie-breakers | `specs/003-utilization-and-ranking/spec.md` | Yes | Yes | Implemented |
 | Snapshot store + hot-path selection | `specs/002-autopilot-mvp/spec.md` | Yes | Yes | Implemented |
 | Alias detection and `model` rewrite | `specs/002-autopilot-mvp/spec.md` | Yes | Yes | Implemented |
-| User-specified model preference list (comma-separated `model`, ordered failover, allow non-TEE) | `specs/004-user-model-preference-list/spec.md` | Yes | Yes | Needs Update |
+| User-specified model preference list (comma-separated `model`, ordered failover, allow non-TEE) | `specs/004-user-model-preference-list/spec.md` | Yes | Yes | Implemented |
 | Sticky selection + rotation (per client key) | `specs/005-sticky-selection-and-rotation/spec.md` | Yes | Yes | Implemented |
 | Proxy upstream request forwarding | `specs/002-autopilot-mvp/spec.md` | Yes | Yes | Implemented |
 | Streaming passthrough (no buffering) | `specs/002-autopilot-mvp/spec.md` | Yes | Yes | Implemented |

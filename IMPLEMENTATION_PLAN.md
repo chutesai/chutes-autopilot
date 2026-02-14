@@ -46,54 +46,53 @@ Out of scope (future):
 ## Implementation Steps
 
 1. Specs and research alignment
-- [ ] Update specs:
-  - [ ] `specs/003-utilization-and-ranking/spec.md`: replace TEE allowlist with model-catalog allowlist.
-  - [ ] `specs/002-autopilot-mvp/spec.md`: allow non-TEE direct models; validate against model catalog when available.
-  - [ ] `specs/004-user-model-preference-list/spec.md`: allow non-TEE lists; validate against model catalog when available.
-- [ ] Update research artifacts and coverage matrix to reflect new policy (non-TEE + model catalog).
+- [x] Update specs:
+  - [x] `specs/003-utilization-and-ranking/spec.md`: replace TEE allowlist with model-catalog allowlist.
+  - [x] `specs/002-autopilot-mvp/spec.md`: allow non-TEE direct models; validate against model catalog when available.
+  - [x] `specs/004-user-model-preference-list/spec.md`: allow non-TEE lists; validate against model catalog when available.
+- [x] Update research artifacts and coverage matrix to reflect new policy (non-TEE + model catalog).
 
 2. Configuration surface
-- [ ] Add env vars:
-  - [ ] `MODELS_URL` (default `https://llm.chutes.ai/v1/models`)
-  - [ ] `MODELS_REFRESH_MS` (default `300000`)
-- [ ] Deprecate/remove TEE-only config/env (`CHUTES_LIST_URL`, `CHUTES_LIST_REFRESH_MS`) if no longer used, or keep for a transition period with clear naming.
+- [x] Add env vars:
+  - [x] `MODELS_URL` (default `https://llm.chutes.ai/v1/models`)
+  - [x] `MODELS_REFRESH_MS` (default `300000`)
+- [x] Deprecate/remove TEE-only config/env (`CHUTES_LIST_URL`, `CHUTES_LIST_REFRESH_MS`) if no longer used, or keep for a transition period with clear naming.
 
 3. Control plane: model allowlist refresh
-- [ ] Implement a background refresh task:
-  - [ ] Fetch `MODELS_URL`, parse `data[].id` into `HashSet<String>`.
-  - [ ] Keep last-known-good allowlist on refresh failure.
-  - [ ] Store allowlist + timestamp in runtime state for visibility/debug.
+- [x] Implement a background refresh task:
+  - [x] Fetch `MODELS_URL`, parse `data[].id` into `HashSet<String>`.
+  - [x] Keep last-known-good allowlist on refresh failure.
+  - [x] Store allowlist + timestamp in runtime state for visibility/debug.
 
 4. Control plane: candidate ranking update
-- [ ] Replace TEE allowlist usage with model allowlist usage:
-  - [ ] When allowlist is non-empty, require utilization record `name` is in allowlist.
-  - [ ] When allowlist is empty, use conservative fallback eligibility (recommended: `name` ends with `-TEE`).
-- [ ] Update ranking tests and fixtures to include non-TEE candidates and ensure non-model-catalog candidates are excluded.
+- [x] Replace TEE allowlist usage with model allowlist usage:
+  - [x] When allowlist is non-empty, require utilization record `name` is in allowlist.
+  - [x] When allowlist is empty, use conservative fallback eligibility (recommended: `name` ends with `-TEE`).
+- [x] Update ranking tests and fixtures to include non-TEE candidates and ensure non-model-catalog candidates are excluded.
 
 5. Data plane: request validation update
-- [ ] Remove TEE-only validation for direct and explicit list modes.
-- [ ] When model allowlist is non-empty:
-  - [ ] Reject unknown model ids with `400` (`error.param="model"` and a stable code like `unknown_model`).
-- [ ] When model allowlist is empty:
-  - [ ] Do not pre-validate direct/list items (proxy upstream and let upstream enforce).
+- [x] Remove TEE-only validation for direct and explicit list modes.
+- [x] When model allowlist is non-empty:
+  - [x] Reject unknown model ids with `400` (`error.param="model"` and a stable code like `unknown_model`).
+- [x] When model allowlist is empty:
+  - [x] Do not pre-validate direct/list items (proxy upstream and let upstream enforce).
 
 6. Tests
-- [ ] Update tests that expect `model_not_tee` to the new codes/behavior.
-- [ ] Add/adjust tests for:
-  - [ ] Utilization contains a non-catalog model: excluded from ranked candidates.
-  - [ ] Explicit model list with an unknown item: `400` when allowlist is available.
-  - [ ] Explicit model list contains non-TEE but catalog-valid items: allowed.
+- [x] Update tests that expect `model_not_tee` to the new codes/behavior.
+- [x] Add/adjust tests for:
+  - [x] Utilization contains a non-catalog model: excluded from ranked candidates.
+  - [x] Explicit model list with an unknown item: `400` when allowlist is available.
+  - [x] Explicit model list contains non-TEE but catalog-valid items: allowed.
 
 7. Docs + config files
-- [ ] Update `README.md`, `.env.example`, `docker-compose.yaml` to reflect:
+- [x] Update `README.md`, `.env.example`, `docker-compose.yaml` to reflect:
   - non-TEE support
   - model catalog allowlist filtering
   - any new env vars
 
 8. Verification
-- [ ] Run `make test` and `make lint`.
+- [x] Run `make test` and `make lint`.
 
 ## Notes on Current State
 
-- The existing implementation is TEE-only and uses the chute catalog `tee` field as the eligibility source. It will need refactoring per steps above.
-
+- The implementation now uses the OpenAI-style model catalog (`GET /v1/models`) as the authoritative allowlist and allows both TEE and non-TEE models (with a conservative `-TEE` suffix fallback for utilization ranking when the catalog is unavailable).

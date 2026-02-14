@@ -71,11 +71,11 @@ fn config_from_env() -> anyhow::Result<chutes_autopilot::AppConfig> {
     if let Some(url) = env_string("BACKEND_BASE_URL") {
         cfg.backend_base_url = url;
     }
-    if let Some(url) = env_string("CHUTES_LIST_URL") {
-        cfg.chutes_list_url = url;
+    if let Some(url) = env_string("MODELS_URL") {
+        cfg.models_url = url;
     }
-    if let Some(ms) = env_u64("CHUTES_LIST_REFRESH_MS") {
-        cfg.chutes_list_refresh_ms = Duration::from_millis(ms);
+    if let Some(ms) = env_u64("MODELS_REFRESH_MS") {
+        cfg.models_refresh_ms = Duration::from_millis(ms);
     }
     if let Some(url) = env_string("UTILIZATION_URL") {
         cfg.utilization_url = url;

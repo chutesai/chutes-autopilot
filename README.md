@@ -1,6 +1,6 @@
 # Chutes Autopilot
 
-Chutes Autopilot is a high-performance OpenAI-compatible router for TEE chutes. You send requests to a single endpoint and it enforces TEE-only while routing via either live-utilization ranking (`chutesai/AutoPilot`), an explicit comma-separated preference list, or direct passthrough to a specific TEE chute, while keeping responses fully streamed.
+Chutes Autopilot is a high-performance OpenAI-compatible router for Chutes LLM models. You send requests to a single endpoint and it routes via either live-utilization ranking (`chutesai/AutoPilot`), an explicit comma-separated preference list, or direct passthrough to a specific model, while keeping responses fully streamed.
 
 This stays intentionally simple:
 - It does not transform prompts/messages.
@@ -10,9 +10,9 @@ This stays intentionally simple:
 ## User Journey
 
 1. Point your OpenAI client at the Autopilot base URL (example): `https://autopilot.chutes.ai`.
-2. Set `model` to `chutesai/AutoPilot` (automatic selection), a comma-separated preference list of TEE chute names (explicit failover order), or a specific TEE chute name (direct passthrough).
+2. Set `model` to `chutesai/AutoPilot` (automatic selection), a comma-separated preference list of model ids (explicit failover order), or a specific model id (direct passthrough).
 3. Send your normal `POST /v1/chat/completions` request.
-4. Autopilot enforces TEE-only. When Autopilot is selecting between multiple candidates (alias mode or a preference list), the chosen model is sticky per client (keyed by auth token when present, otherwise requester IP) until there are signs of failure, at which point it rotates.
+4. When Autopilot is selecting between multiple candidates (alias mode or a preference list), the chosen model is sticky per client (keyed by auth token when present, otherwise requester IP) until there are signs of failure, at which point it rotates.
 5. The response streams back to you as-is. For debugging, Autopilot can return headers like `x-chutes-autopilot-selected: <chute name>`.
 
 ### Example (curl)
@@ -57,17 +57,17 @@ Every ~5 seconds, Autopilot fetches current chute utilization:
 - It builds an in-memory ranked list of public candidates using cheap fields like:
   `active_instance_count`, `utilization_{5m,15m,1h}`, `rate_limit_ratio_{5m,15m,1h}`, `scalable`, `scale_allowance`, `name`.
 
-TEE-only (current requirement):
-- Autopilot uses an authoritative TEE allowlist sourced from `GET https://api.chutes.ai/chutes/?limit=1000` (filter `tee==true` and `public==true`).
+Model catalog allowlist:
+- Autopilot maintains an in-memory allowlist of eligible chat-capable model ids from `GET https://llm.chutes.ai/v1/models` (configurable via `MODELS_URL`).
 - On allowlist refresh failure, it keeps the last-known-good allowlist.
-- When the allowlist is empty (for example at startup), it falls back to the `-TEE` name suffix heuristic.
+- When the allowlist is empty (for example at startup), ranking falls back to a conservative eligibility heuristic: `-TEE` suffix only.
 
 ### 2) Request Handling (Data Plane)
 
 For each incoming `POST /v1/chat/completions` request:
 1. Parse the JSON body just enough to read `model`.
 2. Determine the ordered candidate list: if `model` is `chutesai/AutoPilot` (or `chutesai-routing/AutoPilot`), use the global ranked list; if it contains `,`, parse it as a preference list (order is respected); otherwise treat it as a direct single-model request.
-3. Enforce TEE-only eligibility (prefer the TEE allowlist when available; fallback to the `-TEE` suffix heuristic when the allowlist is empty).
+3. If a non-empty model allowlist is available, validate direct and explicit-list models against it (fail fast on typos/unknown models). If the allowlist is empty/unavailable, proxy upstream and let the upstream enforce.
 4. Apply stickiness: compute a client key (prefer `Authorization: Bearer …`, otherwise requester IP); if a sticky model exists for this key and is present in the current candidate set, try it first.
 5. Select the first healthy candidate; rewrite `model` to the selected chute `name` (the Autopilot alias is never forwarded upstream).
 6. Proxy upstream with streaming passthrough (no buffering) to the configured backend base URL (example: `https://llm.chutes.ai`).
@@ -90,7 +90,7 @@ Inputs come from `https://api.chutes.ai/chutes/utilization` and look like:
 
 Algorithm (per refresh):
 
-1. Filter (eligibility): exclude `name == "[private chute]"`; require TEE eligibility (prefer TEE allowlist; fallback to `-TEE` suffix); require `active_instance_count > 0`.
+1. Filter (eligibility): exclude `name == "[private chute]"`; require `active_instance_count > 0`; require `name` is in the model allowlist when the allowlist is non-empty; otherwise fall back to `-TEE` suffix only.
 
 2. Normalize utilization (smooth noisy signals):
 
@@ -133,8 +133,8 @@ Optional future support (only if it stays pure passthrough):
 Environment variables:
 - `LISTEN_ADDR` (default: `0.0.0.0:8080`)
 - `BACKEND_BASE_URL` (default: `https://llm.chutes.ai`)
-- `CHUTES_LIST_URL` (default: `https://api.chutes.ai/chutes/?limit=1000`)
-- `CHUTES_LIST_REFRESH_MS` (default: `300000`)
+- `MODELS_URL` (default: `https://llm.chutes.ai/v1/models`)
+- `MODELS_REFRESH_MS` (default: `300000`)
 - `UTILIZATION_URL` (default: `https://api.chutes.ai/chutes/utilization`)
 - `UTILIZATION_REFRESH_MS` (default: `5000`)
 - `READYZ_MAX_SNAPSHOT_AGE_MS` (default: `20000`)

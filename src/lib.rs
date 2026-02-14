@@ -33,8 +33,8 @@ pub struct AppConfig {
     pub max_request_bytes: usize,
     pub max_model_list_items: usize,
     pub backend_base_url: String,
-    pub chutes_list_url: String,
-    pub chutes_list_refresh_ms: Duration,
+    pub models_url: String,
+    pub models_refresh_ms: Duration,
     pub utilization_url: String,
     pub utilization_refresh_ms: Duration,
     pub upstream_connect_timeout: Duration,
@@ -53,8 +53,8 @@ impl Default for AppConfig {
             max_request_bytes: 1_048_576,
             max_model_list_items: 8,
             backend_base_url: "https://llm.chutes.ai".to_string(),
-            chutes_list_url: "https://api.chutes.ai/chutes/?limit=1000".to_string(),
-            chutes_list_refresh_ms: Duration::from_millis(300_000),
+            models_url: "https://llm.chutes.ai/v1/models".to_string(),
+            models_refresh_ms: Duration::from_millis(300_000),
             utilization_url: "https://api.chutes.ai/chutes/utilization".to_string(),
             utilization_refresh_ms: Duration::from_millis(5_000),
             upstream_connect_timeout: Duration::from_millis(2_000),
@@ -77,7 +77,8 @@ pub struct Readiness {
 #[derive(Debug, Default)]
 struct RuntimeState {
     candidates: Vec<RankedCandidate>,
-    tee_allowlist: HashSet<String>,
+    models_allowlist: HashSet<String>,
+    models_allowlist_at: Option<Instant>,
     snapshot_at: Option<Instant>,
     sticky_models: HashMap<String, StickyModelSelection>,
 }
@@ -119,8 +120,8 @@ impl AppState {
         runtime.snapshot_at = Some(Instant::now());
     }
 
-    async fn tee_allowlist(&self) -> HashSet<String> {
-        self.runtime.read().await.tee_allowlist.clone()
+    async fn models_allowlist(&self) -> HashSet<String> {
+        self.runtime.read().await.models_allowlist.clone()
     }
 
     async fn candidate_models(&self) -> Vec<String> {
@@ -234,7 +235,7 @@ impl AppState {
 /// The service tolerates transient refresh failures by keeping the last-known-good
 /// candidates/allowlist in memory.
 pub fn spawn_control_plane_refresh(state: AppState) {
-    tokio::spawn(refresh_tee_allowlist(state.clone()));
+    tokio::spawn(refresh_models_allowlist(state.clone()));
     tokio::spawn(refresh_candidates(state));
 }
 
@@ -372,7 +373,7 @@ async fn chat_completions(
     let mut candidates: Vec<String> = match routing_mode {
         RoutingMode::AutoPilotAlias => state.candidate_models().await,
         RoutingMode::ExplicitModelList | RoutingMode::Direct => {
-            let tee_allowlist = state.tee_allowlist().await;
+            let models_allowlist = state.models_allowlist().await;
 
             let models = if routing_mode == RoutingMode::Direct {
                 vec![model.to_string()]
@@ -391,27 +392,30 @@ async fn chat_completions(
                 }
             };
 
-            let non_tee: Vec<String> = models
-                .iter()
-                .filter(|m| !is_tee_eligible(m, &tee_allowlist))
-                .cloned()
-                .collect();
-            if !non_tee.is_empty() {
-                let message = if models.len() == 1 {
-                    "model is not TEE-eligible".to_string()
-                } else {
-                    format!(
-                        "model list contains non-TEE model(s): {}",
-                        non_tee.join(", ")
-                    )
-                };
-                return openai_error_response(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_request_error",
-                    message.as_str(),
-                    Some("model"),
-                    Some("model_not_tee"),
-                );
+            // Only validate when we have an authoritative model catalog allowlist.
+            if !models_allowlist.is_empty() {
+                let unknown: Vec<String> = models
+                    .iter()
+                    .filter(|m| !models_allowlist.contains(*m))
+                    .cloned()
+                    .collect();
+                if !unknown.is_empty() {
+                    let message = if models.len() == 1 {
+                        format!("unknown model: {}", unknown[0])
+                    } else {
+                        format!(
+                            "model list contains unknown model(s): {}",
+                            unknown.join(", ")
+                        )
+                    };
+                    return openai_error_response(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        message.as_str(),
+                        Some("model"),
+                        Some("unknown_model"),
+                    );
+                }
             }
 
             models
@@ -869,59 +873,52 @@ fn is_autopilot_alias(model: &str) -> bool {
     matches!(model, "chutesai/AutoPilot" | "chutesai-routing/AutoPilot")
 }
 
-fn is_tee_eligible(model: &str, tee_allowlist: &HashSet<String>) -> bool {
-    if tee_allowlist.is_empty() {
+fn is_model_catalog_eligible(model: &str, models_allowlist: &HashSet<String>) -> bool {
+    if models_allowlist.is_empty() {
+        // Conservative fallback when we don't have an authoritative model catalog yet.
         model.ends_with("-TEE")
     } else {
-        tee_allowlist.contains(model)
+        models_allowlist.contains(model)
     }
 }
 
-async fn refresh_tee_allowlist(state: AppState) {
+async fn refresh_models_allowlist(state: AppState) {
     let client = state.http_client.clone();
     loop {
-        if let Ok(allowlist) = fetch_tee_allowlist(&client, &state.config.chutes_list_url).await {
+        if let Ok(allowlist) = fetch_models_allowlist(&client, &state.config.models_url).await {
             let mut runtime = state.runtime.write().await;
-            runtime.tee_allowlist = allowlist;
+            runtime.models_allowlist = allowlist;
+            runtime.models_allowlist_at = Some(Instant::now());
         }
 
-        tokio::time::sleep(state.config.chutes_list_refresh_ms).await;
+        tokio::time::sleep(state.config.models_refresh_ms).await;
     }
 }
 
 async fn refresh_candidates(state: AppState) {
     let client = state.http_client.clone();
     loop {
-        let tee_allowlist = state.runtime.read().await.tee_allowlist.clone();
+        let models_allowlist = state.runtime.read().await.models_allowlist.clone();
 
         let candidates =
-            fetch_ranked_candidates(&client, &state.config.utilization_url, &tee_allowlist).await;
+            fetch_ranked_candidates(&client, &state.config.utilization_url, &models_allowlist)
+                .await;
         state.update_candidate_snapshot(candidates).await;
 
         tokio::time::sleep(state.config.utilization_refresh_ms).await;
     }
 }
 
-async fn fetch_tee_allowlist(client: &Client, url: &str) -> anyhow::Result<HashSet<String>> {
+async fn fetch_models_allowlist(client: &Client, url: &str) -> anyhow::Result<HashSet<String>> {
     let response = client.get(url).send().await?.error_for_status()?;
-    let payload = response.json::<serde_json::Value>().await?;
-
-    let items_value = payload.get("items").cloned().unwrap_or(payload);
-
-    let items: Vec<ChuteCatalogItem> = serde_json::from_value(items_value)?;
-    let allowlist = items
-        .into_iter()
-        .filter(|item| item.tee && item.public)
-        .map(|item| item.name)
-        .collect();
-
-    Ok(allowlist)
+    let payload = response.json::<OpenAiModelListResponse>().await?;
+    Ok(payload.data.into_iter().map(|m| m.id).collect())
 }
 
 async fn fetch_ranked_candidates(
     client: &Client,
     url: &str,
-    tee_allowlist: &HashSet<String>,
+    models_allowlist: &HashSet<String>,
 ) -> anyhow::Result<Vec<RankedCandidate>> {
     let utilizations: Vec<UtilizationRecord> = client
         .get(url)
@@ -931,18 +928,18 @@ async fn fetch_ranked_candidates(
         .json::<Vec<UtilizationRecord>>()
         .await?;
 
-    Ok(rank_candidates(utilizations, tee_allowlist))
+    Ok(rank_candidates(utilizations, models_allowlist))
 }
 
 fn rank_candidates(
     records: Vec<UtilizationRecord>,
-    tee_allowlist: &HashSet<String>,
+    models_allowlist: &HashSet<String>,
 ) -> Vec<RankedCandidate> {
     let mut ranked: Vec<RankedCandidate> = records
         .into_iter()
         .filter(|record| !record.is_private_chute())
         .filter(|record| record.active_instance_count > 0)
-        .filter(|record| is_tee_eligible(&record.name, tee_allowlist))
+        .filter(|record| is_model_catalog_eligible(&record.name, models_allowlist))
         .map(RankedCandidate::from)
         .collect();
 
@@ -1009,12 +1006,13 @@ impl From<UtilizationRecord> for RankedCandidate {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChuteCatalogItem {
-    name: String,
-    #[serde(default)]
-    tee: bool,
-    #[serde(default)]
-    public: bool,
+struct OpenAiModelListResponse {
+    data: Vec<OpenAiModelItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelItem {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1278,13 +1276,12 @@ mod tests {
     }
 
     #[test]
-    fn rank_candidates_filters_by_tee_allowlist_when_present() {
-        let allowlist =
-            HashSet::from(["allow/Model-TEE".to_string(), "keep/Model-TEE".to_string()]);
+    fn rank_candidates_filters_by_model_allowlist_when_present() {
+        let allowlist = HashSet::from(["allow/Model".to_string(), "keep/Model".to_string()]);
         let ranked = rank_candidates(
             vec![
                 UtilizationRecord {
-                    name: "allow/Model-TEE".to_string(),
+                    name: "allow/Model".to_string(),
                     active_instance_count: 2,
                     utilization_current: Some(0.2),
                     utilization_5m: Some(0.2),
@@ -1314,7 +1311,7 @@ mod tests {
         );
 
         assert_eq!(ranked.len(), 1);
-        assert_eq!(ranked[0].name, "allow/Model-TEE");
+        assert_eq!(ranked[0].name, "allow/Model");
     }
 
     #[test]
@@ -1897,7 +1894,7 @@ mod tests {
                     .method("POST")
                     .uri("/v1/chat/completions")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"model":"direct-TEE"}"#))
+                    .body(Body::from(r#"{"model":"direct-nontee"}"#))
                     .unwrap(),
             )
             .await
@@ -1907,7 +1904,7 @@ mod tests {
         assert!(resp.headers().get("x-chutes-autopilot-selected").is_none());
 
         let got_attempts = attempts.lock().unwrap().clone();
-        assert_eq!(got_attempts, vec!["direct-TEE".to_string()]);
+        assert_eq!(got_attempts, vec!["direct-nontee".to_string()]);
 
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(body, Bytes::from_static(b"direct-ok"));
@@ -2004,10 +2001,8 @@ mod tests {
         let state = AppState::new(AppConfig::default());
         {
             let mut runtime = state.runtime.write().await;
-            runtime.tee_allowlist = HashSet::from([
-                "allowed/TEE-Model".to_string(),
-                "other/TEE-Model".to_string(),
-            ]);
+            runtime.models_allowlist =
+                HashSet::from(["allowed/Model".to_string(), "other/Model".to_string()]);
         }
 
         let app = app(state);
@@ -2017,9 +2012,7 @@ mod tests {
                     .method("POST")
                     .uri("/v1/chat/completions")
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"model":"allowed/TEE-Model,missing/TEE-Model"}"#,
-                    ))
+                    .body(Body::from(r#"{"model":"allowed/Model,missing/Model"}"#))
                     .unwrap(),
             )
             .await
@@ -2031,7 +2024,7 @@ mod tests {
         let parsed: OpenAiErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(parsed.error.error_type, "invalid_request_error");
         assert_eq!(parsed.error.param.as_deref(), Some("model"));
-        assert_eq!(parsed.error.code.as_deref(), Some("model_not_tee"));
+        assert_eq!(parsed.error.code.as_deref(), Some("unknown_model"));
     }
 
     #[tokio::test]
@@ -2375,8 +2368,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chat_completions_rejects_non_tee_items_in_model_list() {
-        let state = AppState::new(AppConfig::default());
+    async fn chat_completions_allows_non_tee_items_in_model_list_when_allowlist_is_empty() {
+        let attempts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let upstream_attempts = attempts.clone();
+        let upstream = Router::new().route(
+            "/v1/chat/completions",
+            post(move |Json(v): Json<Value>| {
+                let upstream_attempts = upstream_attempts.clone();
+                async move {
+                    let model = v
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    upstream_attempts.lock().unwrap().push(model.clone());
+
+                    if model == "a-TEE" {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "try later").into_response();
+                    }
+
+                    (StatusCode::OK, "ok").into_response()
+                }
+            }),
+        );
+        let (base_url, upstream_handle) = spawn_upstream(upstream).await;
+
+        let state = AppState::new(test_config(base_url));
         let app = app(state);
 
         let resp = app
@@ -2391,39 +2408,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("x-chutes-autopilot-selected")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "b"
+        );
 
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let parsed: OpenAiErrorResponse = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.error.error_type, "invalid_request_error");
-        assert_eq!(parsed.error.param.as_deref(), Some("model"));
-        assert_eq!(parsed.error.code.as_deref(), Some("model_not_tee"));
-    }
+        let got_attempts = attempts.lock().unwrap().clone();
+        assert_eq!(got_attempts, vec!["a-TEE".to_string(), "b".to_string()]);
 
-    #[tokio::test]
-    async fn chat_completions_rejects_single_non_tee_model() {
-        let state = AppState::new(AppConfig::default());
-        let app = app(state);
-
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/chat/completions")
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"model":"moonshotai/Kimi-K2.5"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let parsed: OpenAiErrorResponse = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.error.error_type, "invalid_request_error");
-        assert_eq!(parsed.error.param.as_deref(), Some("model"));
-        assert_eq!(parsed.error.code.as_deref(), Some("model_not_tee"));
+        upstream_handle.abort();
     }
 
     #[test]
