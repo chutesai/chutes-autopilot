@@ -1,0 +1,6 @@
+# When CADDY_TLS=false, CADDY_PROTOCOL will be "http://"
+# When CADDY_TLS=true or unset, CADDY_PROTOCOL will be empty (enables auto-HTTPS if CADDY_DOMAIN is set)
+{$CADDY_PROTOCOL:}{$CADDY_DOMAIN:}:{$CADDY_PORT:443} {
+	reverse_proxy chutes-autopilot:8080
+}
+

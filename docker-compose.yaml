@@ -1,0 +1,57 @@
+services:
+  chutes-autopilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chutes-autopilot
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8080
+      RUST_LOG: ${RUST_LOG:-info}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-https://llm.chutes.ai}
+      CHUTES_LIST_URL: ${CHUTES_LIST_URL:-https://api.chutes.ai/chutes/?limit=1000}
+      CHUTES_LIST_REFRESH_MS: ${CHUTES_LIST_REFRESH_MS:-300000}
+      UTILIZATION_URL: ${UTILIZATION_URL:-https://api.chutes.ai/chutes/utilization}
+      UTILIZATION_REFRESH_MS: ${UTILIZATION_REFRESH_MS:-5000}
+      READYZ_MAX_SNAPSHOT_AGE_MS: ${READYZ_MAX_SNAPSHOT_AGE_MS:-20000}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
+      MAX_MODEL_LIST_ITEMS: ${MAX_MODEL_LIST_ITEMS:-8}
+      UPSTREAM_CONNECT_TIMEOUT_MS: ${UPSTREAM_CONNECT_TIMEOUT_MS:-2000}
+      UPSTREAM_HEADER_TIMEOUT_MS: ${UPSTREAM_HEADER_TIMEOUT_MS:-10000}
+      UPSTREAM_FIRST_BODY_BYTE_TIMEOUT_MS: ${UPSTREAM_FIRST_BODY_BYTE_TIMEOUT_MS:-120000}
+      STICKY_TTL_SECS: ${STICKY_TTL_SECS:-1800}
+      STICKY_MAX_ENTRIES: ${STICKY_MAX_ENTRIES:-10000}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/healthz" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  caddy:
+    image: caddy:latest
+    container_name: chutes-autopilot-caddy
+    environment:
+      - CADDY_DOMAIN=${CADDY_DOMAIN:-}
+      - CADDY_PORT=${CADDY_PORT:-443}
+      - CADDY_TLS=${CADDY_TLS:-true}
+    ports:
+      - "${CADDY_PORT:-443}:${CADDY_PORT:-443}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./caddy-entrypoint.sh:/caddy-entrypoint.sh:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    entrypoint: [ "/caddy-entrypoint.sh" ]
+    depends_on:
+      - chutes-autopilot
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+
