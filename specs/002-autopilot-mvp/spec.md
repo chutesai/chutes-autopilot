@@ -50,7 +50,7 @@ Rules:
      - the `model` field is rewritten when alias routing or model-list routing is used
      - response header `x-chutes-autopilot-selected` is added when alias routing or model-list routing is used
 2. **Alias routing**
-   - The service treats `chutesai/AutoPilot` and `chutesai-routing/AutoPilot` as aliases.
+   - The service treats `chutesai/AutoPilot` as the canonical model alias.
 3. **Health**
    - `GET /healthz` always returns `200`.
    - `GET /readyz` returns `200` only when:

@@ -1177,7 +1177,7 @@ fn derive_sticky_key(
 }
 
 fn is_autopilot_alias(model: &str) -> bool {
-    matches!(model, "chutesai/AutoPilot" | "chutesai-routing/AutoPilot")
+    model == "chutesai/AutoPilot"
 }
 
 fn is_model_catalog_eligible(model: &str, models_allowlist: &HashSet<String>) -> bool {

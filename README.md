@@ -73,7 +73,7 @@ Model catalog allowlist:
 
 For each incoming `POST /v1/chat/completions` request:
 1. Parse the JSON body just enough to read `model`.
-2. Determine the ordered candidate list: if `model` is `chutesai/AutoPilot` (or `chutesai-routing/AutoPilot`), use the global ranked list; if it contains `,`, parse it as a preference list (order is respected); otherwise treat it as a direct single-model request.
+2. Determine the ordered candidate list: if `model` is `chutesai/AutoPilot`, use the global ranked list; if it contains `,`, parse it as a preference list (order is preserved, whitespace is trimmed, duplicates are removed, empty items are ignored, and `MAX_MODEL_LIST_ITEMS` is enforced); otherwise treat it as a direct single-model request.
 3. If a non-empty model allowlist is available, validate direct and explicit-list models against it (fail fast on typos/unknown models). If the allowlist is empty/unavailable, proxy upstream and let the upstream enforce.
 4. Apply stickiness: compute a client key (prefer `Authorization: Bearer …`, otherwise requester IP); if a sticky model exists for this key and is present in the current candidate set, try it first.
 5. Select the first healthy candidate; rewrite `model` to the selected chute `name` (the Autopilot alias is never forwarded upstream).
@@ -164,6 +164,9 @@ Environment variables:
 - `UPSTREAM_HEADER_TIMEOUT_MS` (default: `10000`)
 - `UPSTREAM_FIRST_BODY_BYTE_TIMEOUT_MS` (default: `120000`)
 
+Proxy trust caveat:
+- `x-forwarded-for` is only used for sticky-client identity when `TRUST_PROXY_HEADERS=true` and the immediate peer IP is inside `TRUSTED_PROXY_CIDRS`; otherwise stickiness uses the direct peer IP.
+
 ## Deployment
 
 The container image is pinned to Rust 1.93.1 (see `rust-toolchain.toml` + `Dockerfile`), built via a multi-stage Dockerfile, and runs as a non-root `autopilot` user (`uid=10001`, `gid=10001` by default) on a minimal `debian:bookworm-slim` base with only CA certs + `tini`. Healthchecks target `/readyz`, so the container reports healthy only after fresh model and utilization snapshots are loaded. Override the runtime user/ids or toolchain version with `APP_USER`, `APP_UID`, `APP_GID`, and `RUST_VERSION` (see `.env.example`).
@@ -176,19 +179,19 @@ Recommended production setup follows our prior proxies:
 
 This repo includes:
 - `.env.example` (documented defaults)
-- `.env` (a safe local test configuration; no secrets)
 
-Run with `.env` loaded:
+Create a local `.env` from `.env.example` and run with env loaded:
 
 ```bash
+cp .env.example .env
 make run-env
 ```
 
 Then test:
 
 ```bash
-curl -sS http://127.0.0.1:8082/healthz
-curl -sS http://127.0.0.1:8082/readyz
+curl -sS http://127.0.0.1:8080/healthz
+curl -sS http://127.0.0.1:8080/readyz
 ```
 
 ### Docker Compose (Service + Caddy)
@@ -196,8 +199,8 @@ curl -sS http://127.0.0.1:8082/readyz
 This repo includes `docker-compose.yaml`, `Dockerfile`, `Caddyfile`, and `caddy-entrypoint.sh` in the same pattern as `claude-proxy`.
 
 ```bash
-docker-compose up -d
-docker-compose logs -f
+docker compose up -d
+docker compose logs -f
 ```
 
 - `HOST_PORT` (default `8080`) forwards to the container's `LISTEN_ADDR`.
