@@ -28,9 +28,10 @@ Requirements:
 1. Prioritize by dependency and impact.
 2. Use actionable checkbox tasks (`- [ ]`).
 3. Keep tasks small enough for one loop iteration.
-4. Add a short "Completed" section for done items (`- [x]`).
-5. If `maps/agent-source-map.yaml` exists, include at least one cross-engine improvement task for `ralphie.sh`.
-6. For any provider-specific task, add a paired parity/fallback task.
+4. Include explicit `## Goal` and `## Acceptance Criteria` (or `## Validation`) sections.
+5. Add a short "Completed" section for done items (`- [x]`).
+6. If `maps/agent-source-map.yaml` exists, include at least one cross-engine improvement task for `ralphie.sh`.
+7. For any provider-specific task, add a paired parity/fallback task.
 
 When the plan is saved and coherent, output:
 `<promise>DONE</promise>`
