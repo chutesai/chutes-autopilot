@@ -10,6 +10,7 @@ logs/
 logs/*
 !logs/baseline.md
 !logs/secrets.md
+logs/smoke/
 consensus/
 completion_log/
 *.log

@@ -1458,6 +1458,8 @@ mod tests {
     use http::Request;
     use http_body_util::BodyExt;
     use proptest::prelude::*;
+    use std::collections::HashSet;
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
@@ -3229,6 +3231,197 @@ mod tests {
 
         let got = derive_sticky_key(&cfg, &headers, &connect_info).unwrap();
         assert_eq!(got, "ip:198.51.100.7");
+    }
+
+    fn live_fixture(name: &str) -> Vec<u8> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        std::fs::read(root.join("testdata/chutes_live").join(name)).unwrap()
+    }
+
+    #[test]
+    fn live_models_fixture_parses_allowlist() {
+        let bytes = live_fixture("models_2026-02-18.json");
+        let parsed: OpenAiModelListResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(parsed.data.len() > 50);
+        assert!(
+            parsed.data.iter().any(|m| m.id.contains("TEE")),
+            "fixture should include TEE-prefixed models"
+        );
+    }
+
+    #[test]
+    fn live_utilization_fixture_ranks_candidates_with_allowlist() {
+        let util_bytes = live_fixture("utilization_2026-02-18.json");
+        let records: Vec<UtilizationRecord> = serde_json::from_slice(&util_bytes).unwrap();
+        assert!(records.len() > 100);
+
+        let models_bytes = live_fixture("models_2026-02-18.json");
+        let allowlist: HashSet<String> =
+            serde_json::from_slice::<OpenAiModelListResponse>(&models_bytes)
+                .unwrap()
+                .data
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
+
+        let ranked = rank_candidates(records, &allowlist);
+        assert!(!ranked.is_empty());
+        assert!(ranked.iter().all(|c| allowlist.contains(&c.name)));
+        assert!(ranked.iter().all(|c| c.active_instance_count > 0));
+    }
+
+    #[tokio::test]
+    async fn chat_completions_does_not_failover_on_upstream_401() {
+        let attempts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let upstream_attempts = attempts.clone();
+        let upstream_body = live_fixture("chat_completions_invalid_token_2026-02-18.json");
+        let upstream = Router::new().route(
+            "/v1/chat/completions",
+            post(move |Json(v): Json<Value>| {
+                let upstream_attempts = upstream_attempts.clone();
+                let body = upstream_body.clone();
+                async move {
+                    let model = v
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    upstream_attempts.lock().unwrap().push(model);
+                    let mut resp = Response::new(Body::from(body));
+                    *resp.status_mut() = StatusCode::UNAUTHORIZED;
+                    resp
+                }
+            }),
+        );
+        let (base_url, upstream_handle) = spawn_upstream(upstream).await;
+
+        let state = AppState::new(test_config(base_url));
+        {
+            let mut runtime = state.runtime.write().await;
+            runtime.candidates = vec![
+                RankedCandidate {
+                    name: "primary-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.1,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 0.9,
+                },
+                RankedCandidate {
+                    name: "secondary-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.2,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 0.8,
+                },
+            ];
+            runtime.snapshot_at = Some(Instant::now());
+            runtime.models_allowlist =
+                HashSet::from(["primary-TEE".to_string(), "secondary-TEE".to_string()]);
+            runtime.models_allowlist_at = Some(Instant::now());
+        }
+
+        let app = app(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"primary-TEE,secondary-TEE"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers().get("x-chutes-autopilot-selected").unwrap(),
+            &axum::http::header::HeaderValue::from_static("primary-TEE")
+        );
+        assert_eq!(attempts.lock().unwrap().len(), 1);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let expected = live_fixture("chat_completions_invalid_token_2026-02-18.json");
+        assert_eq!(body.as_ref(), expected.as_slice());
+
+        upstream_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_completions_preserves_html_body_on_429() {
+        let attempts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let upstream_attempts = attempts.clone();
+        let upstream_body = live_fixture("chat_completions_no_auth_429_2026-02-18.html");
+        let upstream = Router::new().route(
+            "/v1/chat/completions",
+            post(move |Json(v): Json<Value>| {
+                let upstream_attempts = upstream_attempts.clone();
+                let body = upstream_body.clone();
+                async move {
+                    let model = v
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    upstream_attempts.lock().unwrap().push(model);
+                    let mut resp = Response::new(Body::from(body));
+                    *resp.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                    resp
+                }
+            }),
+        );
+        let (base_url, upstream_handle) = spawn_upstream(upstream).await;
+
+        let state = AppState::new(test_config(base_url));
+        {
+            let mut runtime = state.runtime.write().await;
+            runtime.candidates = vec![
+                RankedCandidate {
+                    name: "preferred-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.1,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 0.9,
+                },
+                RankedCandidate {
+                    name: "backup-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.2,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 0.8,
+                },
+            ];
+            runtime.snapshot_at = Some(Instant::now());
+            runtime.models_allowlist =
+                HashSet::from(["preferred-TEE".to_string(), "backup-TEE".to_string()]);
+            runtime.models_allowlist_at = Some(Instant::now());
+        }
+
+        let app = app(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"preferred-TEE,backup-TEE"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers().get("x-chutes-autopilot-selected").unwrap(),
+            &axum::http::header::HeaderValue::from_static("preferred-TEE")
+        );
+        assert_eq!(attempts.lock().unwrap().len(), 1);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let expected = live_fixture("chat_completions_no_auth_429_2026-02-18.html");
+        assert_eq!(body.as_ref(), expected.as_slice());
+
+        upstream_handle.abort();
     }
 
     #[tokio::test]

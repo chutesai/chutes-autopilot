@@ -1,4 +1,4 @@
-.PHONY: run run-env test fmt clippy lint
+.PHONY: run run-env test fmt clippy lint smoke
 
 run:
 	cargo run
@@ -18,3 +18,6 @@ clippy:
 lint:
 	cargo fmt --check
 	cargo clippy -- -D warnings
+
+smoke:
+	cargo run --bin smoke

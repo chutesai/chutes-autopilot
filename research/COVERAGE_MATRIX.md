@@ -27,8 +27,9 @@ Legend:
 | Safety: request size limit, no sensitive logging | `specs/002-autopilot-mvp/spec.md` | Yes | Yes | Implemented (logging not asserted in tests) |
 | Error responses use OpenAI `ErrorResponse` JSON shape | `specs/002-autopilot-mvp/spec.md` | Yes | Yes | Implemented |
 | Trusted proxy headers for stickiness (opt-in) | `specs/005-sticky-selection-and-rotation/spec.md` | Yes | Yes | Implemented |
+| Live auth + rate-limit semantics for `/v1/chat/completions` (401 JSON on invalid token; 429 HTML when unauthenticated) | `specs/002-autopilot-mvp/spec.md` | Yes | Yes (fixtures `chat_completions_invalid_token_2026-02-18.json`, `chat_completions_no_auth_429_2026-02-18.html`; tests `chat_completions_does_not_failover_on_upstream_401`, `chat_completions_preserves_html_body_on_429`) | Implemented |
+| Evidence endpoint behavior (`GET /chutes/{id}/evidence?nonce=` requires 64-hex nonce; non-TEE rejected; older runtime requires `chutes_version >= 0.6.0`) | Research | Yes | Yes (fixtures `evidence_*_2026-02-18.json`; tests `evidence_fixture_*` in `tests/evidence_fixtures.rs`) | Implemented (success-path capture still pending) |
 
 ## Gaps / Unknowns
 
-- Whether Chutes `tee`/`confidential_compute` implies a cryptographic attestation guarantee, and whether `/chutes/{id_or_name}/evidence` should be used, needs research.
-- Backend behavior for auth errors and rate limiting needs integration testing with real upstream.
+- Evidence success path is still unverified (all observed responses were validation errors or non-TEE); capture a successful attestation payload once a chute running `chutes_version >= 0.6.0` is available.

@@ -10,12 +10,12 @@ Ship a production-ready Chutes Autopilot router with hardened supply chain, offl
 - `.env.example` and `.gitignore` remain safe (no real keys) while covering new smoke/log artifacts.
 
 ## Tasks (ordered by dependency and impact)
-- [ ] Offline smoke harness: build a stub upstream + runner (e.g., `scripts/smoke.sh` + `make smoke`) that exercises alias, preference-list, and direct flows (streaming, timeout/failover cases) and writes artifacts to `logs/smoke/` (gitignored).
-- [ ] Document smoke usage: wire `make smoke` into README and ensure `.gitignore` covers `logs/smoke/` and any harness outputs under `testdata/smoke/`.
-- [ ] Container & compose hardening: refactor `Dockerfile` for pinned Rust toolchain, cached deps, stripped binary, minimal non-root runtime with CA certs; update `docker-compose.yaml` healthcheck to `/readyz` and note runtime user/image expectations in README.
-- [ ] CI automation: add `.github/workflows/ci.yml` that runs `make lint`, `cargo test`, and `make smoke` with cargo caching and uploads smoke/log artifacts on failure (optionally gitleaks/trufflehog step guarded for speed).
-- [ ] Chutes live verification (provider-specific): run targeted calls against the real backend to capture auth requirements, rate-limit behavior, and `/chutes/{id}/evidence` outputs; record sanitized findings in `research/COVERAGE_MATRIX.md` (and `research/RESEARCH_SUMMARY.md` if needed).
-- [ ] Offline parity fixtures from live captures: sanitize and store representative responses under `testdata/chutes_live/`, add integration tests that replay them to validate attestation/rate-limit handling without live network.
+- [x] Offline smoke harness: build a stub upstream + runner (e.g., `scripts/smoke.sh` + `make smoke`) that exercises alias, preference-list, and direct flows (streaming, timeout/failover cases) and writes artifacts to `logs/smoke/` (gitignored).
+- [x] Document smoke usage: wire `make smoke` into README and ensure `.gitignore` covers `logs/smoke/` and any harness outputs under `testdata/smoke/`.
+- [x] Container & compose hardening: refactor `Dockerfile` for pinned Rust toolchain, cached deps, stripped binary, minimal non-root runtime with CA certs; update `docker-compose.yaml` healthcheck to `/readyz` and note runtime user/image expectations in README.
+- [x] CI automation: add `.github/workflows/ci.yml` that runs `make lint`, `cargo test`, and `make smoke` with cargo caching and uploads smoke/log artifacts on failure (optionally gitleaks/trufflehog step guarded for speed).
+- [x] Chutes live verification (provider-specific): run targeted calls against the real backend to capture auth requirements, rate-limit behavior, and `/chutes/{id}/evidence` outputs; record sanitized findings in `research/COVERAGE_MATRIX.md` (and `research/RESEARCH_SUMMARY.md` if needed).
+- [x] Offline parity fixtures from live captures: sanitize and store representative responses under `testdata/chutes_live/`, add integration tests that replay them to validate attestation/rate-limit handling without live network.
 
 ## Completed
 - [x] Baseline fmt/clippy/test run recorded (2026-02-18) in `logs/baseline.md`.

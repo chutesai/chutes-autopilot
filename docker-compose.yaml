@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        RUST_VERSION: ${RUST_VERSION:-1.93.1}
+        APP_UID: ${APP_UID:-10001}
+        APP_GID: ${APP_GID:-10001}
+        APP_USER: ${APP_USER:-autopilot}
     container_name: chutes-autopilot
     environment:
       LISTEN_ADDR: 0.0.0.0:8080
@@ -14,6 +19,7 @@ services:
       UTILIZATION_REFRESH_MS: ${UTILIZATION_REFRESH_MS:-5000}
       CONTROL_PLANE_TIMEOUT_MS: ${CONTROL_PLANE_TIMEOUT_MS:-10000}
       READYZ_MAX_SNAPSHOT_AGE_MS: ${READYZ_MAX_SNAPSHOT_AGE_MS:-20000}
+      READYZ_MAX_ALLOWLIST_AGE_MS: ${READYZ_MAX_ALLOWLIST_AGE_MS:-600000}
       MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
       MAX_MODEL_LIST_ITEMS: ${MAX_MODEL_LIST_ITEMS:-8}
       UPSTREAM_CONNECT_TIMEOUT_MS: ${UPSTREAM_CONNECT_TIMEOUT_MS:-2000}
@@ -25,16 +31,25 @@ services:
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
     ports:
       - "${HOST_PORT:-8080}:8080"
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/healthz" ]
-      interval: 30s
-      timeout: 10s
+      test: [ "CMD-SHELL", "curl -f http://127.0.0.1:8080/readyz || exit 1" ]
+      interval: 20s
+      timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 25s
 
   caddy:
-    image: caddy:latest
+    image: caddy:2.8.4-alpine
     container_name: chutes-autopilot-caddy
     environment:
       - CADDY_DOMAIN=${CADDY_DOMAIN:-}
@@ -49,7 +64,8 @@ services:
       - caddy_config:/config
     entrypoint: [ "/caddy-entrypoint.sh" ]
     depends_on:
-      - chutes-autopilot
+      chutes-autopilot:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

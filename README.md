@@ -45,6 +45,13 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
+## Smoke Test (offline)
+
+Run a local end-to-end smoke against a stubbed backend:
+
+- `make smoke` — builds and runs `src/bin/smoke.rs`, spins up stub upstream + Autopilot, and writes a JSON report under `logs/smoke/` (latest at `logs/smoke/latest.json`). The command exits non-zero if any scenario fails.
+- Coverage: alias streaming, explicit preference failover, first-body-byte timeout failover, and direct passthrough. All traffic is local and requires no real credentials.
+
 ## Method (How It Works)
 
 Autopilot has two loops: a background refresh loop and the request hot path.
@@ -159,7 +166,9 @@ Environment variables:
 
 ## Deployment
 
-Recommended production setup is the same pattern as our prior proxies:
+The container image is pinned to Rust 1.93.1 (see `rust-toolchain.toml` + `Dockerfile`), built via a multi-stage Dockerfile, and runs as a non-root `autopilot` user (`uid=10001`, `gid=10001` by default) on a minimal `debian:bookworm-slim` base with only CA certs + `tini`. Healthchecks target `/readyz`, so the container reports healthy only after fresh model and utilization snapshots are loaded. Override the runtime user/ids or toolchain version with `APP_USER`, `APP_UID`, `APP_GID`, and `RUST_VERSION` (see `.env.example`).
+
+Recommended production setup follows our prior proxies:
 - Run the Autopilot service behind Caddy for TLS and clean domain routing.
 - Keep the data plane hot path minimal (streaming passthrough) and do all decisioning via an in-memory snapshot.
 
@@ -190,6 +199,10 @@ This repo includes `docker-compose.yaml`, `Dockerfile`, `Caddyfile`, and `caddy-
 docker-compose up -d
 docker-compose logs -f
 ```
+
+- `HOST_PORT` (default `8080`) forwards to the container's `LISTEN_ADDR`.
+- The service runs as `${APP_UID:-10001}:${APP_GID:-10001}` with all Linux capabilities dropped; set these in `.env` if you need the UID/GID to match host-mounted volumes.
+- Healthcheck uses `/readyz`; it stays unhealthy until the control-plane endpoints are reachable and snapshots are fresh.
 
 Configure via environment variables (or a `.env` file):
 - `HOST_PORT` (default: `8080`) maps host `HOST_PORT` -> container `8080`
