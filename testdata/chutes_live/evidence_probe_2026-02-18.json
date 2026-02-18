@@ -1,0 +1,153 @@
+{
+  "captured_at": "2026-02-18",
+  "nonce_len": 64,
+  "samples": [
+    {
+      "chute_id": "0df3133d-c477-56d2-b4db-f2093bb150a1",
+      "name": "deepseek-ai/DeepSeek-V3-0324-TEE",
+      "chutes_version": "0.5.4.rc7",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "398651e1-5f85-5e50-a513-7c5324e8e839",
+      "name": "deepseek-ai/DeepSeek-V3.2-TEE",
+      "chutes_version": "0.5.4.rc13",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "8f3bb827-b9e6-5487-88bc-ee8f0c6f5810",
+      "name": "openai/gpt-oss-120b-TEE",
+      "chutes_version": "0.5.4.rc9",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "a59e1368-049e-5ae8-bd9a-2b4fe942754e",
+      "name": "Qwen/Qwen3-235B-A22B-Instruct-2507-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "08a7a60f-6956-5a9e-9983-5603c3ac5a38",
+      "name": "zai-org/GLM-4.7-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "579ca543-dda4-51d0-83ef-5667d1a5ed5f",
+      "name": "zai-org/GLM-4.6-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "e51e818e-fa63-570d-9f68-49d7d1b4d12f",
+      "name": "zai-org/GLM-5-TEE",
+      "chutes_version": "0.5.4.rc13",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "2ff25e81-4586-5ec8-b892-3a6f342693d7",
+      "name": "moonshotai/Kimi-K2.5-TEE",
+      "chutes_version": "0.5.4.rc7",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "2b724174-4afe-59bd-b174-e72395354acd",
+      "name": "deepseek-ai/DeepSeek-V3.1-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "6ff97a2a-ab6d-5a36-91e0-156339182e5f",
+      "name": "deepseek-ai/DeepSeek-R1-0528-TEE",
+      "chutes_version": "0.5.4.rc13",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "b07349e6-3313-5945-8887-6fc4aca0dbf0",
+      "name": "NousResearch/Hermes-4-405B-FP8-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "d08a740e-f71c-51f8-a87a-040c7ff39b4a",
+      "name": "deepseek-ai/DeepSeek-V3.1-Terminus-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "0596f791-79e9-51e1-bf93-93f22a4e8110",
+      "name": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8-TEE",
+      "chutes_version": "0.5.4.rc7",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "ce6a92e4-5c2f-5681-9742-c80a4447bbdf",
+      "name": "MiniMaxAI/MiniMax-M2.5-TEE",
+      "chutes_version": "0.5.4.rc13",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "ca9c77ec-c932-5aac-9c21-c584ce2e1847",
+      "name": "OpenGVLab/InternVL3-78B-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "62b7ae7e-e1f5-52c3-a47f-fa4eb4bf618b",
+      "name": "Qwen/Qwen2.5-VL-72B-Instruct-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "6ef49e82-40da-5bca-a326-be97fd1e997e",
+      "name": "moonshotai/Kimi-K2-Thinking-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "a77cfe8b-fdf5-5f2d-a613-f8958bbe893c",
+      "name": "deepseek-ai/DeepSeek-R1-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "1c2b2bd7-afdd-5248-9a73-938d55f03dcd",
+      "name": "MiniMaxAI/MiniMax-M2.1-TEE",
+      "chutes_version": "0.5.3.rc8",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "51a4284a-a5a0-5e44-a9cc-6af5a2abfbcf",
+      "name": "Qwen/Qwen3.5-397B-A17B-TEE",
+      "chutes_version": "0.5.4.rc13",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    },
+    {
+      "chute_id": "39d75699-957f-571f-8737-f2c72819d3e8",
+      "name": "deepseek-ai/DeepSeek-V3.2-Speciale-TEE",
+      "chutes_version": "0.5.4.rc9",
+      "http_status": 400,
+      "detail": "Instances requires chutes_version >= 0.6.0 to retrieve evidence."
+    }
+  ]
+}
