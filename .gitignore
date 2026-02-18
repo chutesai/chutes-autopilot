@@ -9,6 +9,7 @@ logs/
 !logs/
 logs/*
 !logs/baseline.md
+!logs/secrets.md
 consensus/
 completion_log/
 *.log

@@ -62,6 +62,9 @@ fn config_from_env() -> anyhow::Result<chutes_autopilot::AppConfig> {
     if let Some(ms) = env_u64("READYZ_MAX_SNAPSHOT_AGE_MS") {
         cfg.readyz_max_snapshot_age = Duration::from_millis(ms);
     }
+    if let Some(ms) = env_u64("READYZ_MAX_ALLOWLIST_AGE_MS") {
+        cfg.readyz_max_allowlist_age = Duration::from_millis(ms);
+    }
     if let Some(value) = env_usize("MAX_REQUEST_BYTES") {
         cfg.max_request_bytes = value;
     }

@@ -53,7 +53,9 @@ Rules:
    - The service treats `chutesai/AutoPilot` and `chutesai-routing/AutoPilot` as aliases.
 3. **Health**
    - `GET /healthz` always returns `200`.
-   - `GET /readyz` returns `200` only if the candidate snapshot is non-empty and not older than `READYZ_MAX_SNAPSHOT_AGE_MS`.
+   - `GET /readyz` returns `200` only when:
+     - the model allowlist has been fetched at least once, is non-empty, and is not older than `READYZ_MAX_ALLOWLIST_AGE_MS`; and
+     - the candidate snapshot is non-empty and not older than `READYZ_MAX_SNAPSHOT_AGE_MS`.
 4. **Streaming**
    - When upstream responds with a streaming body, the service forwards bytes as they arrive (no full buffering) and flushes to the client.
 5. **Failover**

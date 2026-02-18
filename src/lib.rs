@@ -15,21 +15,25 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::{stream, StreamExt};
 use ipnet::IpNet;
+use prometheus::{Encoder, IntCounterVec, IntGauge, Opts, Registry, TextEncoder};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
     runtime: Arc<RwLock<RuntimeState>>,
     config: AppConfig,
     http_client: Client,
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub readyz_max_snapshot_age: Duration,
+    pub readyz_max_allowlist_age: Duration,
     pub max_request_bytes: usize,
     pub max_model_list_items: usize,
     pub backend_base_url: String,
@@ -51,6 +55,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             readyz_max_snapshot_age: Duration::from_millis(20_000),
+            readyz_max_allowlist_age: Duration::from_millis(600_000),
             max_request_bytes: 1_048_576,
             max_model_list_items: 8,
             backend_base_url: "https://llm.chutes.ai".to_string(),
@@ -72,8 +77,10 @@ impl Default for AppConfig {
 
 #[derive(Debug, Clone)]
 pub struct Readiness {
-    pub has_candidates: bool,
+    pub candidates_len: usize,
     pub snapshot_at: Option<Instant>,
+    pub models_allowlist_len: usize,
+    pub models_allowlist_at: Option<Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -83,6 +90,171 @@ struct RuntimeState {
     models_allowlist_at: Option<Instant>,
     snapshot_at: Option<Instant>,
     sticky_models: HashMap<String, StickyModelSelection>,
+}
+
+#[derive(Clone)]
+struct Metrics {
+    registry: Registry,
+    req_active: IntGauge,
+    req_total: IntCounterVec,
+    ready_snapshot_age_ms: IntGauge,
+    ready_allowlist_age_ms: IntGauge,
+    ready_candidates: IntGauge,
+    ready_allowlist_size: IntGauge,
+    selection_total: IntCounterVec,
+    failover_reason_total: IntCounterVec,
+}
+
+struct ActiveRequestGuard {
+    gauge: IntGauge,
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.gauge.dec();
+    }
+}
+
+impl Metrics {
+    fn new() -> Self {
+        let registry = Registry::new();
+
+        let req_active = IntGauge::new(
+            "chutes_autopilot_requests_active",
+            "in-flight /v1/chat/completions requests",
+        )
+        .expect("req_active");
+        registry
+            .register(Box::new(req_active.clone()))
+            .expect("register req_active");
+
+        let req_total = IntCounterVec::new(
+            Opts::new(
+                "chutes_autopilot_requests_total",
+                "total /v1/chat/completions responses by status",
+            ),
+            &["status"],
+        )
+        .expect("req_total");
+        registry
+            .register(Box::new(req_total.clone()))
+            .expect("register req_total");
+
+        let ready_snapshot_age_ms = IntGauge::new(
+            "chutes_autopilot_ready_snapshot_age_ms",
+            "age in milliseconds of the candidate snapshot used for readiness; -1 when missing",
+        )
+        .expect("ready_snapshot_age_ms");
+        registry
+            .register(Box::new(ready_snapshot_age_ms.clone()))
+            .expect("register ready_snapshot_age_ms");
+
+        let ready_allowlist_age_ms = IntGauge::new(
+            "chutes_autopilot_ready_allowlist_age_ms",
+            "age in milliseconds of the models allowlist used for readiness; -1 when missing",
+        )
+        .expect("ready_allowlist_age_ms");
+        registry
+            .register(Box::new(ready_allowlist_age_ms.clone()))
+            .expect("register ready_allowlist_age_ms");
+
+        let ready_candidates = IntGauge::new(
+            "chutes_autopilot_ready_candidates",
+            "candidate chute count observed at readiness check time",
+        )
+        .expect("ready_candidates");
+        registry
+            .register(Box::new(ready_candidates.clone()))
+            .expect("register ready_candidates");
+
+        let ready_allowlist_size = IntGauge::new(
+            "chutes_autopilot_ready_allowlist_size",
+            "models allowlist size observed at readiness check time",
+        )
+        .expect("ready_allowlist_size");
+        registry
+            .register(Box::new(ready_allowlist_size.clone()))
+            .expect("register ready_allowlist_size");
+
+        let selection_total = IntCounterVec::new(
+            Opts::new(
+                "chutes_autopilot_selection_total",
+                "count of upstream selections by model and status",
+            ),
+            &["model", "status"],
+        )
+        .expect("selection_total");
+        registry
+            .register(Box::new(selection_total.clone()))
+            .expect("register selection_total");
+
+        let failover_reason_total = IntCounterVec::new(
+            Opts::new(
+                "chutes_autopilot_failover_reason_total",
+                "count of failover decisions by reason",
+            ),
+            &["reason"],
+        )
+        .expect("failover_reason_total");
+        registry
+            .register(Box::new(failover_reason_total.clone()))
+            .expect("register failover_reason_total");
+
+        Self {
+            registry,
+            req_active,
+            req_total,
+            ready_snapshot_age_ms,
+            ready_allowlist_age_ms,
+            ready_candidates,
+            ready_allowlist_size,
+            selection_total,
+            failover_reason_total,
+        }
+    }
+
+    fn active_guard(&self) -> ActiveRequestGuard {
+        self.req_active.inc();
+        ActiveRequestGuard {
+            gauge: self.req_active.clone(),
+        }
+    }
+
+    fn observe_request_status(&self, status: StatusCode) {
+        let code = status.as_u16().to_string();
+        self.req_total.with_label_values(&[code.as_str()]).inc();
+    }
+
+    fn observe_selection(&self, model: &str, status: StatusCode) {
+        let code = status.as_u16().to_string();
+        self.selection_total
+            .with_label_values(&[model, code.as_str()])
+            .inc();
+    }
+
+    fn observe_failover(&self, reason: &str) {
+        self.failover_reason_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    fn observe_readiness(&self, readiness: &Readiness) {
+        self.ready_candidates.set(readiness.candidates_len as i64);
+        self.ready_allowlist_size
+            .set(readiness.models_allowlist_len as i64);
+
+        let snapshot_age = readiness
+            .snapshot_at
+            .map(|i| i.elapsed().as_millis() as i64)
+            .unwrap_or(-1);
+        self.ready_snapshot_age_ms.set(snapshot_age);
+
+        let allowlist_age = readiness
+            .models_allowlist_at
+            .map(|i| i.elapsed().as_millis() as i64)
+            .unwrap_or(-1);
+        self.ready_allowlist_age_ms.set(allowlist_age);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -103,18 +275,22 @@ impl AppState {
             .no_zstd()
             .build()
             .expect("failed to build reqwest client");
+        let metrics = Arc::new(Metrics::new());
         Self {
             runtime: Arc::new(RwLock::new(RuntimeState::default())),
             config,
             http_client,
+            metrics,
         }
     }
 
     async fn readiness(&self) -> Readiness {
         let runtime = self.runtime.read().await;
         Readiness {
-            has_candidates: !runtime.candidates.is_empty(),
+            candidates_len: runtime.candidates.len(),
             snapshot_at: runtime.snapshot_at,
+            models_allowlist_len: runtime.models_allowlist.len(),
+            models_allowlist_at: runtime.models_allowlist_at,
         }
     }
 
@@ -256,6 +432,7 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
         .route("/v1/chat/completions", post(chat_completions))
         .layer(DefaultBodyLimit::max(max_request_bytes))
         .with_state(state)
@@ -265,8 +442,57 @@ async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+async fn metrics(State(state): State<AppState>) -> Response {
+    let metric_families = state.metrics.registry.gather();
+    let mut buf = Vec::new();
+    if let Err(err) = TextEncoder::new().encode(&metric_families, &mut buf) {
+        tracing::error!(error = ?err, "failed to encode metrics");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    let mut resp = Response::new(Body::from(buf));
+    *resp.status_mut() = StatusCode::OK;
+    resp.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4"),
+    );
+    resp
+}
+
 async fn readyz(State(state): State<AppState>) -> Response {
     let r = state.readiness().await;
+    state.metrics.observe_readiness(&r);
+
+    let Some(models_allowlist_at) = r.models_allowlist_at else {
+        return openai_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "not_ready",
+            "service not ready: models allowlist unavailable",
+            None,
+            Some("missing_allowlist"),
+        );
+    };
+
+    if r.models_allowlist_len == 0 {
+        return openai_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "not_ready",
+            "service not ready: models allowlist is empty",
+            None,
+            Some("allowlist_empty"),
+        );
+    }
+
+    let allowlist_age = models_allowlist_at.elapsed();
+    if allowlist_age > state.config.readyz_max_allowlist_age {
+        return openai_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "not_ready",
+            "service not ready: models allowlist is stale",
+            None,
+            Some("stale_allowlist"),
+        );
+    }
 
     let Some(snapshot_at) = r.snapshot_at else {
         return openai_error_response(
@@ -278,7 +504,7 @@ async fn readyz(State(state): State<AppState>) -> Response {
         );
     };
 
-    if !r.has_candidates {
+    if r.candidates_len == 0 {
         return openai_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "not_ready",
@@ -308,35 +534,43 @@ async fn chat_completions(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Response {
+    let req_id = Uuid::new_v4().to_string();
+    let _active_guard = state.metrics.active_guard();
+    let metrics = state.metrics.clone();
+    let record = |resp: Response| {
+        metrics.observe_request_status(resp.status());
+        resp
+    };
+
     let body = match body {
         Ok(body) => body,
         Err(rejection) => {
             return match rejection {
                 BytesRejection::FailedToBufferBody(FailedToBufferBody::LengthLimitError(_)) => {
-                    openai_error_response(
+                    record(openai_error_response(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         "invalid_request_error",
                         "request body too large",
                         None,
                         Some("request_too_large"),
-                    )
+                    ))
                 }
                 BytesRejection::FailedToBufferBody(FailedToBufferBody::UnknownBodyError(_)) => {
-                    openai_error_response(
+                    record(openai_error_response(
                         StatusCode::BAD_REQUEST,
                         "invalid_request_error",
                         "failed to read request body",
                         None,
                         Some("invalid_body"),
-                    )
+                    ))
                 }
-                _ => openai_error_response(
+                _ => record(openai_error_response(
                     StatusCode::BAD_REQUEST,
                     "invalid_request_error",
                     "failed to read request body",
                     None,
                     Some("invalid_body"),
-                ),
+                )),
             };
         }
     };
@@ -344,34 +578,34 @@ async fn chat_completions(
     let mut v: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(_) => {
-            return openai_error_response(
+            return record(openai_error_response(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
                 "invalid JSON body",
                 None,
                 Some("invalid_json"),
-            );
+            ));
         }
     };
 
     if !v.is_object() {
-        return openai_error_response(
+        return record(openai_error_response(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
             "request body must be a JSON object",
             None,
             Some("invalid_body"),
-        );
+        ));
     }
 
     let Some(model) = v.get("model").and_then(Value::as_str) else {
-        return openai_error_response(
+        return record(openai_error_response(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
             "missing required field: model",
             Some("model"),
             Some("missing_model"),
-        );
+        ));
     };
 
     let routing_mode = routing_mode_for_model(model);
@@ -393,13 +627,13 @@ async fn chat_completions(
                 match parse_model_preference_list(model, state.config.max_model_list_items) {
                     Ok(models) => models,
                     Err(e) => {
-                        return openai_error_response(
+                        return record(openai_error_response(
                             StatusCode::BAD_REQUEST,
                             "invalid_request_error",
                             &e.message,
                             Some("model"),
                             Some(&e.code),
-                        );
+                        ));
                     }
                 }
             };
@@ -420,13 +654,13 @@ async fn chat_completions(
                             unknown.join(", ")
                         )
                     };
-                    return openai_error_response(
+                    return record(openai_error_response(
                         StatusCode::BAD_REQUEST,
                         "invalid_request_error",
                         message.as_str(),
                         Some("model"),
                         Some("unknown_model"),
-                    );
+                    ));
                 }
             }
 
@@ -434,14 +668,21 @@ async fn chat_completions(
         }
     };
 
+    tracing::info!(
+        req_id = %req_id,
+        routing_mode = ?routing_mode,
+        candidates_len = candidates.len(),
+        "chat request validated"
+    );
+
     if candidates.is_empty() {
-        return openai_error_response(
+        return record(openai_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "server_error",
             "no eligible candidates available",
             Some("model"),
             Some("no_candidates"),
-        );
+        ));
     }
 
     let client_key = if apply_stickiness {
@@ -464,15 +705,18 @@ async fn chat_completions(
         }
     }
 
-    proxy_chat_completions_with_failover(
+    let resp = proxy_chat_completions_with_failover(
         &state,
         &headers,
         &mut v,
         &candidates,
         add_selected_header,
         client_key.as_ref(),
+        &req_id,
     )
-    .await
+    .await;
+
+    record(resp)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -579,12 +823,14 @@ fn log_selected_model(
     candidates_total: usize,
     status: StatusCode,
     snapshot_age_ms: Option<u64>,
+    req_id: &str,
 ) {
     if !add_selected_header {
         return;
     }
 
     tracing::info!(
+        req_id = %req_id,
         selected_model = %model_name,
         attempt_idx,
         candidates_total,
@@ -619,6 +865,7 @@ async fn proxy_chat_completions_with_failover(
     candidates: &[String],
     add_selected_header: bool,
     client_key: Option<&String>,
+    req_id: &str,
 ) -> Response {
     let url = upstream_chat_completions_url(&state.config);
     let upstream_headers = filter_upstream_request_headers(headers);
@@ -628,6 +875,7 @@ async fn proxy_chat_completions_with_failover(
         .await
         .snapshot_at
         .map(|instant| instant.elapsed().as_millis() as u64);
+    let metrics = state.metrics.clone();
 
     // Only rotate sticky selection when we have a client key. Centralizing this avoids repeating
     // the same `if let Some(key)` guard all over the retry paths.
@@ -676,9 +924,11 @@ async fn proxy_chat_completions_with_failover(
             match tokio::time::timeout(state.config.upstream_header_timeout, req.send()).await {
                 Err(_) => {
                     rotate_sticky(model_name.clone()).await;
+                    metrics.observe_failover("upstream_header_timeout");
 
                     if has_next {
                         tracing::warn!(
+                            req_id = %req_id,
                             failed_model = %model_name,
                             attempt_idx = idx,
                             candidates_total = candidates.len(),
@@ -699,9 +949,11 @@ async fn proxy_chat_completions_with_failover(
                 }
                 Ok(Err(_)) => {
                     rotate_sticky(model_name.clone()).await;
+                    metrics.observe_failover("upstream_connect_error");
 
                     if has_next {
                         tracing::warn!(
+                            req_id = %req_id,
                             failed_model = %model_name,
                             attempt_idx = idx,
                             candidates_total = candidates.len(),
@@ -729,7 +981,9 @@ async fn proxy_chat_completions_with_failover(
         // Retryable upstream status before committing bytes.
         if status == StatusCode::SERVICE_UNAVAILABLE && has_next {
             rotate_sticky(model_name.clone()).await;
+            metrics.observe_failover("upstream_503");
             tracing::warn!(
+                req_id = %req_id,
                 failed_model = %model_name,
                 attempt_idx = idx,
                 candidates_total = candidates.len(),
@@ -753,8 +1007,10 @@ async fn proxy_chat_completions_with_failover(
             {
                 Err(_) | Ok(None) => {
                     rotate_sticky(model_name.clone()).await;
+                    metrics.observe_failover("upstream_first_body_byte_timeout");
                     if has_next {
                         tracing::warn!(
+                            req_id = %req_id,
                             failed_model = %model_name,
                             attempt_idx = idx,
                             candidates_total = candidates.len(),
@@ -775,8 +1031,10 @@ async fn proxy_chat_completions_with_failover(
                 }
                 Ok(Some(Err(_))) => {
                     rotate_sticky(model_name.clone()).await;
+                    metrics.observe_failover("upstream_first_body_byte_error");
                     if has_next {
                         tracing::warn!(
+                            req_id = %req_id,
                             failed_model = %model_name,
                             attempt_idx = idx,
                             candidates_total = candidates.len(),
@@ -810,6 +1068,7 @@ async fn proxy_chat_completions_with_failover(
                         combined,
                         selected_model_header,
                     );
+                    metrics.observe_selection(model_name, status);
                     log_selected_model(
                         add_selected_header,
                         model_name,
@@ -817,6 +1076,7 @@ async fn proxy_chat_completions_with_failover(
                         candidates.len(),
                         status,
                         snapshot_age_ms,
+                        req_id,
                     );
                     return resp;
                 }
@@ -836,6 +1096,7 @@ async fn proxy_chat_completions_with_failover(
             stream,
             selected_model_header,
         );
+        metrics.observe_selection(model_name, status);
         log_selected_model(
             add_selected_header,
             model_name,
@@ -843,6 +1104,7 @@ async fn proxy_chat_completions_with_failover(
             candidates.len(),
             status,
             snapshot_age_ms,
+            req_id,
         );
         return resp;
     }
@@ -1195,7 +1457,9 @@ mod tests {
     use axum::{Json, Router};
     use http::Request;
     use http_body_util::BodyExt;
+    use proptest::prelude::*;
     use std::sync::{Arc, Mutex};
+    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
     use tower::ServiceExt;
 
@@ -1253,6 +1517,44 @@ mod tests {
         assert_eq!(err.code, "invalid_model_list");
     }
 
+    proptest! {
+        #[test]
+        fn parse_model_list_trims_and_dedups_property(items in proptest::collection::vec("[A-Za-z0-9_./-]{1,12}", 1..8)) {
+            let raw = items
+                .iter()
+                .map(|s| format!(" {s} "))
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let mut seen = std::collections::HashSet::new();
+            let expected: Vec<String> = items
+                .iter()
+                .filter_map(|s| {
+                    if seen.insert(s.clone()) {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let got = parse_model_preference_list(&raw, 8).unwrap();
+            prop_assert_eq!(got, expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn parse_model_list_errors_when_unique_items_exceed_max(items in proptest::collection::vec("[A-Za-z0-9_./-]{1,12}", 9..16)) {
+            let unique: std::collections::HashSet<String> = items.iter().cloned().collect();
+            prop_assume!(unique.len() > 8);
+
+            let raw = items.join(",");
+            let result = parse_model_preference_list(&raw, 8);
+            prop_assert!(result.is_err());
+        }
+    }
+
     #[test]
     fn derive_sticky_key_ignores_xff_by_default() {
         let cfg = AppConfig::default();
@@ -1306,6 +1608,35 @@ mod tests {
 
         let got = derive_sticky_key(&cfg, &headers, &connect_info).unwrap();
         assert_eq!(got, "ip:198.51.100.7");
+    }
+
+    proptest! {
+        #[test]
+        fn derive_sticky_key_prefers_bearer_token_even_with_whitespace(token in "[A-Za-z0-9]{1,32}") {
+            let cfg = AppConfig::default();
+
+            let mut headers_spaced = HeaderMap::new();
+            headers_spaced.insert(
+                "authorization",
+                HeaderValue::from_str(&format!("  Bearer   {token}   ")).unwrap(),
+            );
+
+            let mut headers_clean = HeaderMap::new();
+            headers_clean.insert(
+                "authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+
+            let connect_info = Some(ConnectInfo(
+                "203.0.113.10:1234".parse::<SocketAddr>().unwrap(),
+            ));
+
+            let spaced = derive_sticky_key(&cfg, &headers_spaced, &connect_info).unwrap();
+            let clean = derive_sticky_key(&cfg, &headers_clean, &connect_info).unwrap();
+
+            prop_assert!(spaced.starts_with("auth:"));
+            prop_assert_eq!(spaced, clean);
+        }
     }
 
     #[test]
@@ -1855,6 +2186,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn metrics_endpoint_returns_prometheus_text() {
+        let state = AppState::new(AppConfig::default());
+        let app = app(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_TYPE.as_str())
+                .unwrap(),
+            &HeaderValue::from_static("text/plain; version=0.0.4")
+        );
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("chutes_autopilot_requests_active"));
+    }
+
+    #[tokio::test]
     async fn readyz_defaults_to_503() {
         let state = AppState::new(AppConfig::default());
         let app = app(state);
@@ -1870,6 +2229,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let parsed: OpenAiErrorResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed.error.code.as_deref(), Some("missing_allowlist"));
     }
 
     #[tokio::test]
@@ -1877,6 +2240,8 @@ mod tests {
         let state = AppState::new(AppConfig::default());
         {
             let mut runtime = state.runtime.write().await;
+            runtime.models_allowlist = HashSet::from(["ready/TEE-Model".to_string()]);
+            runtime.models_allowlist_at = Some(Instant::now());
             runtime.candidates = vec![RankedCandidate {
                 name: "ready/TEE-Model".to_string(),
                 active_instance_count: 1,
@@ -1911,6 +2276,8 @@ mod tests {
         let state = AppState::new(cfg);
         {
             let mut runtime = state.runtime.write().await;
+            runtime.models_allowlist = HashSet::from(["stale/TEE-Model".to_string()]);
+            runtime.models_allowlist_at = Some(Instant::now());
             runtime.candidates = vec![RankedCandidate {
                 name: "stale/TEE-Model".to_string(),
                 active_instance_count: 1,
@@ -1937,6 +2304,77 @@ mod tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let parsed: OpenAiErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(parsed.error.code.as_deref(), Some("stale_snapshot"));
+    }
+
+    #[tokio::test]
+    async fn readyz_returns_503_when_allowlist_is_empty() {
+        let state = AppState::new(AppConfig::default());
+        {
+            let mut runtime = state.runtime.write().await;
+            runtime.models_allowlist_at = Some(Instant::now());
+            runtime.candidates = vec![RankedCandidate {
+                name: "ready/TEE-Model".to_string(),
+                active_instance_count: 1,
+                utilization_current: 0.0,
+                rate_limit_ratio_5m: 0.0,
+                score: 1.0,
+            }];
+            runtime.snapshot_at = Some(Instant::now());
+        }
+        let app = app(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let parsed: OpenAiErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.error.code.as_deref(), Some("allowlist_empty"));
+    }
+
+    #[tokio::test]
+    async fn readyz_returns_503_when_allowlist_is_stale() {
+        let cfg = AppConfig {
+            readyz_max_allowlist_age: Duration::from_millis(1),
+            ..Default::default()
+        };
+        let state = AppState::new(cfg);
+        {
+            let mut runtime = state.runtime.write().await;
+            runtime.models_allowlist = HashSet::from(["ready/TEE-Model".to_string()]);
+            runtime.models_allowlist_at = Some(Instant::now() - Duration::from_secs(1));
+            runtime.candidates = vec![RankedCandidate {
+                name: "ready/TEE-Model".to_string(),
+                active_instance_count: 1,
+                utilization_current: 0.0,
+                rate_limit_ratio_5m: 0.0,
+                score: 1.0,
+            }];
+            runtime.snapshot_at = Some(Instant::now());
+        }
+        let app = app(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/readyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let parsed: OpenAiErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.error.code.as_deref(), Some("stale_allowlist"));
     }
 
     #[tokio::test]
@@ -2327,6 +2765,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_completions_failover_on_connection_reset_before_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+
+        let upstream_handle = tokio::spawn(async move {
+            let mut seen = 0u32;
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                seen += 1;
+
+                if seen == 1 {
+                    // Drop the connection immediately to simulate a reset before headers.
+                    continue;
+                }
+
+                let response = b"HTTP/1.1 200 OK\r\ncontent-length:2\r\n\r\nok";
+                if let Err(err) = socket.write_all(response).await {
+                    tracing::warn!(error = ?err, "failed to write upstream response in test");
+                }
+            }
+        });
+
+        let mut cfg = test_config(base_url);
+        cfg.upstream_header_timeout = Duration::from_millis(200);
+        let state = AppState::new(cfg);
+        {
+            let mut runtime = state.runtime.write().await;
+            runtime.candidates = vec![
+                RankedCandidate {
+                    name: "first-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.1,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 1.0,
+                },
+                RankedCandidate {
+                    name: "second-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.1,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 0.9,
+                },
+            ];
+            runtime.snapshot_at = Some(Instant::now());
+        }
+
+        let app = app(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"first-TEE,second-TEE"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("x-chutes-autopilot-selected").unwrap(),
+            &axum::http::header::HeaderValue::from_static("second-TEE")
+        );
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body, Bytes::from_static(b"ok"));
+
+        upstream_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn chat_completions_connect_error_reports_bad_gateway_after_exhaustion() {
+        // Reserve a local port and drop the listener so connects fail immediately.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let mut cfg = test_config(format!("http://{addr}"));
+        cfg.upstream_connect_timeout = Duration::from_millis(50);
+        cfg.upstream_header_timeout = Duration::from_millis(200);
+        let state = AppState::new(cfg);
+        {
+            let mut runtime = state.runtime.write().await;
+            runtime.candidates = vec![
+                RankedCandidate {
+                    name: "first-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.1,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 1.0,
+                },
+                RankedCandidate {
+                    name: "second-TEE".to_string(),
+                    active_instance_count: 1,
+                    utilization_current: 0.1,
+                    rate_limit_ratio_5m: 0.0,
+                    score: 0.9,
+                },
+            ];
+            runtime.snapshot_at = Some(Instant::now());
+        }
+
+        let app = app(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"first-TEE,second-TEE"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let parsed: OpenAiErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.error.code.as_deref(), Some("upstream_connect_error"));
+    }
+
+    #[tokio::test]
     async fn chat_completions_model_list_does_not_retry_on_429() {
         let attempts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let upstream_attempts = attempts.clone();
@@ -2698,5 +3260,35 @@ mod tests {
         assert_eq!(parsed.error.error_type, "invalid_request_error");
         assert_eq!(parsed.error.code.as_deref(), Some("request_too_large"));
         assert_eq!(parsed.error.message, "request body too large");
+    }
+
+    proptest! {
+        #[test]
+        fn chat_completions_rejects_any_body_exceeding_limit(extra in 1usize..64) {
+            let status = tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async move {
+                    let cfg = AppConfig {
+                        max_request_bytes: 32,
+                        ..Default::default()
+                    };
+
+                    let app = app(AppState::new(cfg));
+                    let resp = app
+                        .oneshot(
+                            Request::builder()
+                                .method("POST")
+                                .uri("/v1/chat/completions")
+                                .header("content-type", "application/json")
+                                .body(Body::from(vec![b'a'; 32 + extra]))
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    resp.status()
+                });
+
+            prop_assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        }
     }
 }

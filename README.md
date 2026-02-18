@@ -128,6 +128,12 @@ Supported:
 Optional future support (only if it stays pure passthrough):
 - `POST /v1/completions`
 
+## Observability
+
+- `GET /metrics` exposes Prometheus text-format counters/gauges for request totals/active, candidate + allowlist freshness, selections, and failover reasons.
+- All chat requests carry a `req_id` (UUID) in structured logs alongside routing mode, candidate count, selected model, and failover reason.
+- Sensitive headers/bodies are not logged; the `x-chutes-autopilot-selected` response header is only added for routed (alias/list) requests.
+
 ## Configuration
 
 Environment variables:
@@ -139,6 +145,7 @@ Environment variables:
 - `UTILIZATION_REFRESH_MS` (default: `5000`)
 - `CONTROL_PLANE_TIMEOUT_MS` (default: `10000`)
 - `READYZ_MAX_SNAPSHOT_AGE_MS` (default: `20000`)
+- `READYZ_MAX_ALLOWLIST_AGE_MS` (default: `600000`)
 - `RUST_LOG` (default: `info`)
 - `STICKY_TTL_SECS` (default: `1800`)
 - `STICKY_MAX_ENTRIES` (default: `10000`)
