@@ -7,6 +7,7 @@ ARG APP_USER=autopilot
 
 FROM rust:${RUST_VERSION}-slim AS builder
 
+ARG APP_NAME
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 WORKDIR /app
 
@@ -17,7 +18,9 @@ RUN apt-get update \
 
 # Pre-fetch dependencies to leverage Docker layer caching.
 COPY Cargo.toml Cargo.lock ./
-RUN cargo fetch --locked
+RUN mkdir -p src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo fetch --locked
 
 # Build the binary.
 COPY src ./src
@@ -26,6 +29,7 @@ RUN cargo build --release --locked --bin ${APP_NAME} \
 
 FROM debian:bookworm-slim AS runtime
 
+ARG APP_NAME
 ARG APP_UID
 ARG APP_GID
 ARG APP_USER
