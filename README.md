@@ -49,7 +49,7 @@ print(resp.choices[0].message.content)
 
 Run a local end-to-end smoke against a stubbed backend:
 
-- `make smoke` — builds and runs `src/bin/smoke.rs`, spins up stub upstream + Autopilot, and writes a JSON report under `logs/smoke/` (latest at `logs/smoke/latest.json`). The command exits non-zero if any scenario fails.
+- `make smoke` — builds and runs `src/bin/smoke.rs`, spins up stub upstream + Autopilot, waits for `/readyz`, and writes a JSON report under `logs/smoke/` (latest at `logs/smoke/latest.json`). The command exits non-zero if any scenario fails.
 - Coverage: alias streaming, explicit preference failover, first-body-byte timeout failover, and direct passthrough. All traffic is local and requires no real credentials.
 
 ## Method (How It Works)
@@ -68,6 +68,7 @@ Model catalog allowlist:
 - Autopilot maintains an in-memory allowlist of eligible chat-capable model ids from `GET https://llm.chutes.ai/v1/models` (configurable via `MODELS_URL`).
 - On allowlist refresh failure, it keeps the last-known-good allowlist.
 - When the allowlist is empty (for example at startup), ranking falls back to a conservative eligibility heuristic: `-TEE` suffix only.
+- Readiness remains `503` until a non-empty allowlist has been fetched and is fresh (see `/readyz` behavior below).
 
 ### 2) Request Handling (Data Plane)
 
@@ -169,7 +170,7 @@ Proxy trust caveat:
 
 ## Deployment
 
-The container image is pinned to Rust 1.93.1 (see `rust-toolchain.toml` + `Dockerfile`), built via a multi-stage Dockerfile, and runs as a non-root `autopilot` user (`uid=10001`, `gid=10001` by default) on a minimal `debian:bookworm-slim` base with only CA certs + `tini`. Healthchecks target `/readyz`, so the container reports healthy only after fresh model and utilization snapshots are loaded. Override the runtime user/ids or toolchain version with `APP_USER`, `APP_UID`, `APP_GID`, and `RUST_VERSION` (see `.env.example`).
+The container image is pinned to Rust 1.93.1 (see `rust-toolchain.toml` + `Dockerfile`), built via a multi-stage Dockerfile, and runs as a non-root `autopilot` user (`uid=10001`, `gid=10001` by default) on a minimal `debian:bookworm-slim` base with `ca-certificates`, `curl`, and `tini`. Healthchecks target `/readyz`, so the container reports healthy only after a fresh, non-empty allowlist and a fresh, non-empty candidate snapshot are loaded. Override the runtime user/ids or toolchain version with `APP_USER`, `APP_UID`, `APP_GID`, and `RUST_VERSION` (see `.env.example`).
 
 Recommended production setup follows our prior proxies:
 - Run the Autopilot service behind Caddy for TLS and clean domain routing.
