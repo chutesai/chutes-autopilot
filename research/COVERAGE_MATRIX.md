@@ -32,5 +32,5 @@ Legend:
 
 ## Gaps / Unknowns
 
-- Evidence success path is still unverified: live probe snapshot (`testdata/chutes_live/evidence_probe_2026-02-18.json`) shows 21/21 sampled TEE chutes returning HTTP 400 with `chutes_version >= 0.6.0` gate text, so no success payload was currently capturable.
+- Evidence success path is still unverified: live probe snapshot (`tests/testdata/chutes_live/evidence_probe_2026-02-18.json`) shows 21/21 sampled TEE chutes returning HTTP 400 with `chutes_version >= 0.6.0` gate text, so no success payload was currently capturable.
 - Coverage percentage tooling is not configured in this repo environment (`cargo-llvm-cov`/`cargo-tarpaulin` unavailable); rely on targeted + full regression command evidence until tooling is added.

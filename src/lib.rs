@@ -1721,7 +1721,8 @@ mod tests {
     #[test]
     fn rank_candidates_fixture_filters_and_orders_candidates() {
         let records: Vec<UtilizationRecord> =
-            serde_json::from_str(include_str!("../testdata/utilization_fixture.json")).unwrap();
+            serde_json::from_str(include_str!("../tests/testdata/utilization_fixture.json"))
+                .unwrap();
 
         let ranked = rank_candidates(records, &HashSet::new());
         let names: Vec<String> = ranked.into_iter().map(|c| c.name).collect();
@@ -3235,7 +3236,7 @@ mod tests {
 
     fn live_fixture(name: &str) -> Vec<u8> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        std::fs::read(root.join("testdata/chutes_live").join(name)).unwrap()
+        std::fs::read(root.join("tests/testdata/chutes_live").join(name)).unwrap()
     }
 
     #[test]

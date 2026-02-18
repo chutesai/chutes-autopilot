@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 fn fixture(name: &str) -> Value {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let rel_path = format!("testdata/chutes_live/{name}");
+    let rel_path = format!("tests/testdata/chutes_live/{name}");
     let bytes = std::fs::read(root.join(&rel_path)).unwrap_or_else(|e| {
         panic!("failed to read fixture {rel_path}: {e}");
     });

@@ -8,7 +8,7 @@
   - Process entrypoint: initializes tracing, loads config from env, binds `LISTEN_ADDR`, starts the Axum server.
 - `src/lib.rs`
   - Core service implementation: routes, state, control-plane refresh tasks, ranking, request parsing/routing, proxy + failover, and tests.
-- `testdata/`
+- `tests/testdata/`
   - Committed fixtures used by tests (e.g. utilization ranking fixture).
 - `Makefile`
   - Convenience targets: `make run`, `make test`, `make lint`.
