@@ -1,5 +1,10 @@
 # Chutes Autopilot
 
+> [!NOTE]  
+> This repo can be used as a **standalone** OpenAI-compatible router.  
+> Chutes has since solved this routing/failover problem natively and more elegantly in core via [PR #103](https://github.com/chutesai/chutes-api/pull/103) (model aliases, multi-model resolution, and failover integration in the main API).  
+> Use this repo for quick deployment or experimentation, while the native Chutes approach is the long-term in-product implementation.
+
 Chutes Autopilot is a high-performance OpenAI-compatible router for Chutes LLM models. You send requests to a single endpoint and it routes via either live-utilization ranking (`chutesai/AutoPilot`), an explicit comma-separated preference list, or direct passthrough to a specific model, while keeping responses fully streamed.
 
 This stays intentionally simple:
